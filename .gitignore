@@ -1,0 +1,23 @@
+# виртуальное окружение
+.venv/
+venv/
+ENV/
+
+# кэш python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# ide и редакторы
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# временные файлы и архивы
+*.tar.gz
+*.zip
+*.log
+.DS_Store
+Thumbs.db

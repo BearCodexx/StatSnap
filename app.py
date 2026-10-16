@@ -1,934 +1,266 @@
-import streamlit as st  # веб морда
-import pandas as pd  # таблички
-import numpy as np  # математика
-import matplotlib.pyplot as plt  # графики старые почти не юзаем
-import seaborn as sns  # для красивых тепловых карт если что
-import io  # байты в память
-import os  # файлы хотя не особо нужно
-import plotly.express as px  # интерактив визуализация
-import plotly.graph_objects as go  # кастомные интерактивные графики
-from plotly.subplots import make_subplots  # если надо несколько графиков в одном
-from datetime import datetime, timedelta  # работа с датами
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler, RobustScaler  # препроцессинг
-from sklearn.linear_model import LinearRegression, LogisticRegression  # линейные модели
-from sklearn.metrics import r2_score, mean_squared_error, accuracy_score, roc_auc_score, classification_report  # метрики качества
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, \
-    GradientBoostingRegressor  # ансамбли
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor  # деревья
-from sklearn.cluster import KMeans, DBSCAN  # кластеризация без учителя
-import statsmodels.api as sm  # для p-value и нормальной статистики регрессии
-import warnings  # затыкаем предупреждения
+import io
+import warnings
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import (
+    r2_score, mean_squared_error, mean_absolute_error,
+    accuracy_score, precision_score, recall_score, f1_score,
+    roc_auc_score, classification_report
+)
+from sklearn.ensemble import (
+    RandomForestClassifier, RandomForestRegressor,
+    GradientBoostingClassifier, GradientBoostingRegressor
+)
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.cluster import KMeans
+import statsmodels.api as sm
+
+from utils.data_processing import (
+    load_dataset,
+    optimize_dataframe_memory,
+    export_dataframe_bytes
+)
+from knowledge_base import knowledge_base
 
 warnings.filterwarnings('ignore')
 
-# настройка страницы стримлита широкая тема
+# конфигурация страницы
 st.set_page_config(
-    page_title="StatSnap PRO",
-    page_icon="📊",
+    page_title="StatSnap",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# кастомные стили карточек на главном экране
+# строгие профессиональные стили без иишных градиентов
 st.markdown("""
 <style>
-    .fixed-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        color: white;
-        min-height: 200px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+    /* типографика и глобальный фон */
+    html, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
-    .fixed-card-ml {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        color: white;
-        min-height: 200px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-    .fixed-card-metrics {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        color: white;
-        min-height: 200px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-    .fixed-card h2, .fixed-card-ml h2, .fixed-card-metrics h2 {
-        color: white;
+    
+    /* минималистичные карточки метрик */
+    .metric-card {
+        background-color: var(--secondary-background-color);
+        border: 1px solid rgba(128, 128, 128, 0.18);
+        border-radius: 8px;
+        padding: 14px 18px;
         margin-bottom: 10px;
     }
-    .fixed-card p, .fixed-card-ml p, .fixed-card-metrics p {
-        color: rgba(255,255,255,0.9);
-        font-size: 14px;
+    .metric-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: rgba(128, 128, 128, 0.9);
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+    .metric-value {
+        font-size: 22px;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .metric-delta {
+        font-size: 12px;
+        color: #10b981;
+        margin-top: 4px;
+        font-weight: 500;
+    }
+    
+    /* карточки стартового экрана */
+    .hero-card {
+        background-color: var(--secondary-background-color);
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        border-radius: 10px;
+        padding: 24px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+    }
+    .hero-tag {
+        display: inline-block;
+        font-family: monospace;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 4px;
+        background: rgba(128, 128, 128, 0.12);
+        margin-bottom: 12px;
+        width: fit-content;
+    }
+    .hero-title {
+        font-size: 17px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .hero-desc {
+        font-size: 13px;
+        color: rgba(128, 128, 128, 0.9);
+        line-height: 1.5;
+    }
+    
+    /* баннер стартовой страницы */
+    .welcome-panel {
+        background: var(--secondary-background-color);
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        border-left: 4px solid #3b82f6;
+        border-radius: 8px;
+        padding: 24px 30px;
+        margin-bottom: 24px;
+    }
+    
+    /* бейджи для технической инфы */
+    .badge {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: monospace;
+        background: rgba(128, 128, 128, 0.15);
+        margin-right: 6px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# инициализация состояния сессии храним датафрейм оригинал и имя файла
+# инициализация сессионного состояния
 if 'df' not in st.session_state:
     st.session_state.df = None
 if 'df_original' not in st.session_state:
     st.session_state.df_original = None
 if 'filename' not in st.session_state:
     st.session_state.filename = None
+if 'file_hash' not in st.session_state:
+    st.session_state.file_hash = None
+if 'mem_stats' not in st.session_state:
+    st.session_state.mem_stats = None
 
 
-# функции
+# функции генерации аналитических отчетов
 
-def detect_separator(uploaded_file):
-    """определяем разделитель csv по первой строке"""
-    content = uploaded_file.getvalue().decode('utf-8', errors='ignore')
-    first_line = content.split('\n')[0]
-    if ';' in first_line and ',' not in first_line:
-        return ';'
-    elif '\t' in first_line:
-        return '\t'
-    else:
-        return ','
+def explain_linear_regression(sm_model, y_true, y_pred, feature_names, target_name):
+    # текстовая расшифровка линейной регрессии
+    r2 = r2_score(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+    p_val_f = sm_model.f_pvalue
 
+    sig_vars = [var for var, p in zip(sm_model.params.index, sm_model.pvalues) if p < 0.05 and var != 'const']
 
-def load_data(uploaded_file):
-    """загрузка csv или excel с автоопределением разделителя"""
-    filename = uploaded_file.name
-    if filename.endswith('.csv'):
-        sep = detect_separator(uploaded_file)
-        uploaded_file.seek(0)  # сброс указателя потому что выше читали
-        return pd.read_csv(uploaded_file, sep=sep, encoding='utf-8')
-    else:
-        return pd.read_excel(uploaded_file)
+    lines = [
+        f"РЕЗЮМЕ МОДЕЛИ: {target_name}",
+        f"--------------------------------------------------",
+        f"• Качество подгонки R²: {r2:.4f} (скорректированный: {sm_model.rsquared_adj:.4f})",
+        f"• Средняя ошибка RMSE: {rmse:.4f} | MAE: {mae:.4f}",
+        f"• Общая значимость F-статистики: p-value = {p_val_f:.4e} ({'модель адекватна' if p_val_f < 0.05 else 'модель статистически не значима'})",
+        f"• Значимых факторов (p < 0.05): {len(sig_vars)} из {len(feature_names)} ({', '.join(sig_vars) if sig_vars else 'нет'})",
+        "",
+        "УРАВНЕНИЕ РЕГРЕССИИ:",
+    ]
 
+    intercept = sm_model.params.get('const', 0.0)
+    eq_parts = [f"{intercept:.4f}"]
+    for col in feature_names:
+        if col in sm_model.params:
+            coef = sm_model.params[col]
+            sign = "+" if coef >= 0 else "-"
+            eq_parts.append(f"{sign} {abs(coef):.4f} * {col}")
 
-def plot_interactive_chart(df, col, chart_type, color='blue', group_col=None):
-    """строит интерактивный график plotly в зависимости от типа с группировкой или без"""
-    if group_col and group_col != col:
-        if chart_type == "Гистограмма":
-            fig = px.histogram(df, x=col, color=group_col, title=f"Распределение: {col} по {group_col}",
-                               barmode='group')
-        elif chart_type == "Boxplot":
-            fig = px.box(df, x=group_col, y=col, color=group_col, title=f"Boxplot: {col} по {group_col}")
-        elif chart_type == "Круговая диаграмма":
-            # для пайчарта с группировкой используем sunburst иерархия
-            df_grouped = df.groupby([col, group_col]).size().reset_index(name='count')
-            fig = px.sunburst(df_grouped, path=[col, group_col], values='count', title=f"{col} и {group_col}")
-        else:
-            fig = px.histogram(df, x=col, color=group_col, title=f"Распределение: {col} по {group_col}",
-                               barmode='group')
-    else:
-        if chart_type == "Гистограмма":
-            fig = px.histogram(df, x=col, title=f"Распределение: {col}", color_discrete_sequence=[color])
-        elif chart_type == "Boxplot":
-            fig = px.box(df, y=col, title=f"Boxplot: {col}", color_discrete_sequence=[color])
-        elif chart_type == "Линейный график":
-            if df[col].dtype in ['int64', 'float64']:
-                fig = px.line(df, y=col, title=f"Тренд: {col}", color_discrete_sequence=[color])
-            else:
-                fig = px.bar(df[col].value_counts().head(30), title=f"Частоты: {col}", color_discrete_sequence=[color])
-        elif chart_type == "Круговая диаграмма":
-            val_counts = df[col].value_counts().head(30)  # режем до 30 чтоб не месиво
-            fig = px.pie(values=val_counts.values, names=val_counts.index, title=f"Распределение: {col}")
-        else:
-            fig = px.histogram(df, x=col, title=f"Распределение: {col}", color_discrete_sequence=[color])
-    return fig
+    lines.append(f"{target_name} = " + " ".join(eq_parts))
+    return "\n".join(lines)
 
 
-def get_regression_report_full(results, X, y, feature_cols, target_col):
-    """генерим человекочитаемый отчет по регрессии с интерпретацией p-value и R2"""
-    report = ""
-    report += "=" * 60 + "\n"
-    report += f"РЕГРЕССИОННЫЙ АНАЛИЗ\n"
-    report += f"Целевая переменная: {target_col}\n"
-    report += "=" * 60 + "\n\n"
-
-    # качество модели
-    report += "📊 КАЧЕСТВО МОДЕЛИ:\n"
-    report += f"   • R-squared (R²): {results.rsquared:.4f}\n"
-    report += f"   • Adjusted R-squared: {results.rsquared_adj:.4f}\n"
-    report += f"   • F-statistic: {results.fvalue:.2f}\n"
-    report += f"   • Prob (F-statistic): {results.f_pvalue:.4e}\n"
-    if results.f_pvalue < 0.05:
-        report += "     ✅ Модель статистически значима (p < 0.05)\n"
-    else:
-        report += "     ❌ Модель статистически не значима (p > 0.05)\n"
-    report += "\n"
-
-    # коэффициенты с p-value и звездочками значимости
-    report += "📈 КОЭФФИЦИЕНТЫ:\n"
-    for var, coef, pval, std_err in zip(results.params.index, results.params.values, results.pvalues,
-                                        results.bse.values):
-        stars = ""
-        if pval < 0.001:
-            stars = "***"
-        elif pval < 0.01:
-            stars = "**"
-        elif pval < 0.05:
-            stars = "*"
-
-        sig_text = ""
-        if pval < 0.05:
-            sig_text = "✅ статистически значим"
-        else:
-            sig_text = "❌ не значим"
-
-        report += f"   • {var}: {coef:.4f} (p-value: {pval:.4e}) {stars} — {sig_text}\n"
-    report += "\n"
-
-    # интерпретация R²
-    report += "💡 ИНТЕРПРЕТАЦИЯ:\n"
-    if results.rsquared > 0.9:
-        report += "   • Модель отлично объясняет данные (R² > 0.9)\n"
-    elif results.rsquared > 0.7:
-        report += "   • Модель хорошо объясняет данные (R² > 0.7)\n"
-    elif results.rsquared > 0.5:
-        report += "   • Модель средне объясняет данные (R² > 0.5)\n"
-    elif results.rsquared > 0.3:
-        report += "   • Модель слабо объясняет данные (R² > 0.3)\n"
-    else:
-        report += "   • Модель очень слабо объясняет данные (R² < 0.3)\n"
-
-    sig_count = sum(1 for p in results.pvalues if p < 0.05)
-    total_vars = len(results.pvalues)
-    report += f"   • {sig_count} из {total_vars} переменных статистически значимы (p < 0.05)\n"
-
-    # уравнение регрессии
-    report += "\n📐 УРАВНЕНИЕ РЕГРЕССИИ:\n"
-    eq = f"{target_col} = {results.params['const']:.4f}"
-    for var in feature_cols:
-        if var in results.params.index:
-            coef = results.params[var]
-            sign = "+" if coef > 0 else "-"
-            eq += f" {sign} {abs(coef):.4f}*{var}"
-    report += f"   {eq}\n"
-
-    return report
-
-
-def replace_categorical_to_binary(df, col):
-    """конвертим категорию в 0/1 если ровно 2 уникальных значения иначе предупреждение"""
-    unique_vals = df[col].dropna().unique()
-    if len(unique_vals) == 2:
-        mapping = {unique_vals[0]: 0, unique_vals[1]: 1}
-        return df[col].map(mapping), f"✅ Колонка '{col}' преобразована в бинарную (0/1): '{unique_vals[0]}'→0, '{unique_vals[1]}'→1"
-    else:
-        return df[col], f"⚠️ Колонка '{col}' имеет {len(unique_vals)} категорий. Бинаризация невозможна (нужно ровно 2)."
-
-
-def replace_value_in_column(df, col, old_val, new_val):
-    """простая замена значения в колонке"""
-    return df[col].replace(old_val, new_val), f"✅ В колонке '{col}' заменено '{old_val}' → '{new_val}'"
-
-
-# сайдбар
+# сайдбар: загрузка данных и управление ресурсами
 with st.sidebar:
-    st.header("📁 Загрузка данных")
-
+    st.markdown("### Данные и конфигурация")
     uploaded_file = st.file_uploader(
-        "CSV или Excel файл",
-        type=['csv', 'xlsx', 'xls'],
-        help="Без ограничений по размеру"
+        "Загрузить датасет",
+        type=['csv', 'txt', 'xlsx', 'xls'],
+        help="Поддерживаются CSV с любыми разделителями и кодировками (UTF-8, CP1251), а также Excel."
     )
 
-    # планируемые обновления
-    st.divider()
-    st.subheader("🗓️ Планируемые обновления")
-
-    if uploaded_file is None:  # показываем роадмап только если данных нет
-        updates = {
-            "Апрель 2026 (Pre-alpha v0.0.5)": [
-                "✅ Интерактивные графики (plotly)",
-                "✅ Математические модели (регрессия, классификация)",
-                "✅ Бизнес-метрики (Retention, RFM, Cohort)",
-                "✅ Размещение тестовой версии"
-            ],
-            "Май 2026 (Alpha v0.1.0)": [
-                "⏳ Прогнозирование (ARIMA, Prophet)",
-                "⏳ A/B тестирование",
-                "⏳ Анализ временных рядов",
-                "⏳ Исправление ошибок Pre-alpha"
-            ],
-            "Июнь 2026 (Alpha v0.1.x)": [
-                "📅 Нейросетевые модели (MLP, LSTM)",
-                "📅 Автоматический подбор гиперпараметров",
-                "📅 Интерпретация моделей (SHAP, LIME)"
-            ],
-            "Июль 2026 (Alpha v0.1.x)": [
-                "📅 Coming soon"
-            ]
-        }
-
-        for month, items in updates.items():
-            with st.expander(f"📌 {month}"):
-                for item in items:
-                    st.write(item)
-
-        st.divider()
-
-        # поддержка
-        st.subheader("☕ Поддержать проект")
-        st.markdown("""
-            <div style="text-align: center;">
-                <a href="https://www.donationalerts.com/r/bearcodexdev" target="_blank">
-                    <button style="background: #FF9800; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%;">
-                        💖 Поддержать разработчика
-                    </button>
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.caption("Спасибо за поддержку! ❤️")
-
+    # загрузка выполняется строго единожды при смене файла, предотвращая утечки ram
     if uploaded_file is not None:
-        try:
-            df = load_data(uploaded_file)
-            st.session_state.df = df
-            st.session_state.df_original = df.copy()  # сохраняем оригинал для сброса
-            st.session_state.filename = uploaded_file.name
-            st.success(f"✅ {df.shape[0]} строк × {df.shape[1]} колонок")
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
+        file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+        if st.session_state.file_hash != file_id:
+            try:
+                with st.spinner("Загрузка и оптимизация типов..."):
+                    df_loaded, mem_info = load_dataset(uploaded_file, optimize=True)
+                    st.session_state.df = df_loaded
+                    st.session_state.df_original = df_loaded.copy()
+                    st.session_state.filename = uploaded_file.name
+                    st.session_state.file_hash = file_id
+                    st.session_state.mem_stats = mem_info
+                    # сбрасываем старый экспортный буфер
+                    st.session_state.pop('export_cache', None)
+            except Exception as e:
+                st.error(f"Ошибка чтения файла: {e}")
 
+    # блок информации о датасете в памяти
     if st.session_state.df is not None:
-        st.divider()
-        st.metric("📊 Строк", st.session_state.df.shape[0])
-        st.metric("📋 Колонок", st.session_state.df.shape[1])
+        df_curr = st.session_state.df
+        st.markdown("---")
+        st.markdown("### Сводка окружения")
 
-        if st.button("🔄 Сбросить к исходному"):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Строк", f"{df_curr.shape[0]:,}")
+        with c2:
+            st.metric("Колонок", df_curr.shape[1])
+
+        mem_mb = df_curr.memory_usage(deep=True).sum() / (1024 * 1024)
+        st.markdown(f"**Память в RAM:** `{mem_mb:.2f} MB`")
+
+        if st.session_state.mem_stats and st.session_state.mem_stats.get("saved_pct", 0) > 0:
+            saved = st.session_state.mem_stats["saved_pct"]
+            st.caption(f"Экономия RAM за счет сжатия типов: `{saved:.1f}%`")
+
+        if st.button("Сбросить к оригиналу", use_container_width=True):
             st.session_state.df = st.session_state.df_original.copy()
+            st.session_state.pop('export_cache', None)
             st.rerun()
 
-    if st.session_state.df is not None:
-        st.divider()
+        # ленивый экспорт без перегрузки памяти на холостых кликах
+        st.markdown("---")
+        st.markdown("### Экспорт данных")
+        export_fmt = st.selectbox("Формат выгрузки", ["CSV", "Excel"], key="export_fmt_select")
 
-        # кнопка скачивания данных
-        st.subheader("💾 Сохранить данные")
+        # генерируем файл только по нажатию кнопки подготовки
+        if st.button("Сформировать файл для скачивания", use_container_width=True):
+            with st.spinner("Сборка файла..."):
+                file_bytes, mime_type, ext = export_dataframe_bytes(df_curr, export_fmt)
+                st.session_state['export_cache'] = {
+                    'data': file_bytes,
+                    'mime': mime_type,
+                    'filename': f"export_{st.session_state.filename or 'dataset'}{ext}"
+                }
 
-        file_format = st.selectbox("Формат", ["CSV", "Excel"], key="save_format")
-
-        if file_format == "CSV":
-            csv = st.session_state.df.to_csv(index=False).encode('utf-8-sig')
+        if 'export_cache' in st.session_state:
+            cached = st.session_state['export_cache']
             st.download_button(
-                label="📥 Скачать CSV",
-                data=csv,
-                file_name=f"{st.session_state.filename or 'data'}.csv",
-                mime="text/csv",
-                width='stretch'
-            )
-        else:
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                st.session_state.df.to_excel(writer, index=False, sheet_name='Sheet1')
-            excel_data = output.getvalue()
-            st.download_button(
-                label="📥 Скачать Excel",
-                data=excel_data,
-                file_name=f"{st.session_state.filename or 'data'}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width='stretch'
+                label=f"Скачать {cached['filename']}",
+                data=cached['data'],
+                file_name=cached['filename'],
+                mime=cached['mime'],
+                use_container_width=True
             )
 
-        st.divider()
 
-        # кнопка доната в сайдбаре
-        st.subheader("☕ Поддержать проект")
-        st.markdown("""
-        <a href="https://www.donationalerts.com/r/bearcodexdev" target="_blank">
-            <button style="background: #FF9800; color: white; border: none; padding: 10px; border-radius: 8px; width: 100%; cursor: pointer; font-size: 16px;">
-                💖 Поддержать разработчика
-            </button>
-        </a>
-        """, unsafe_allow_html=True)
-
-# основной контент
-if st.session_state.df is not None:
-    df = st.session_state.df
-
-    # вкладки основного интерфейса
-    tabs = st.tabs([
-        "📋 Данные",
-        "📈 Визуализация",
-        "🧠 Мат. модель",
-        "📊 Метрики",
-        "📚 Справочник pandas"
-    ])
-
-    # вкладка 1 (данные)
-    with tabs[0]:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.subheader("Просмотр данных")
-            st.dataframe(df, width='stretch')
-        with col2:
-            st.subheader("Типы данных")
-            # Принудительно преобразуем всё в строки для совместимости
-            dtype_data = []
-            for col in df.columns:
-                col_type = str(df[col].dtype)
-                missing_count = df[col].isnull().sum()
-                unique_count = df[col].nunique()
-                dtype_data.append([col, col_type, missing_count, unique_count])
-
-            dtype_df = pd.DataFrame(dtype_data, columns=['Колонка', 'Тип', 'Пропуски', 'Уникальные'])
-            st.dataframe(dtype_df, width='stretch')
-
-    # вкладка 2 (визуализация)
-    with tabs[1]:
-        st.subheader("Интерактивная визуализация")
-
-        col1, col2 = st.columns([1, 2])
-
-        with col1:
-            chart_col = st.selectbox("Переменная", df.columns, key="chart_col")
-            chart_type = st.selectbox(
-                "Тип графика",
-                ["Гистограмма", "Boxplot", "Линейный график", "Круговая диаграмма", "Scatter plot"],
-                key="chart_type"
-            )
-            chart_color = st.color_picker("Цвет", "#1f77b4", key="chart_color")
-
-            group_by = st.selectbox("Группировать по (опционально)", ["Нет"] + list(df.columns), key="group_by")
-            group_col = None if group_by == "Нет" else group_by
-
-        with col2:
-            if chart_type == "Scatter plot":
-                x_col = st.selectbox("Ось X", df.columns, key="scatter_x")
-                y_col = st.selectbox("Ось Y", df.columns, key="scatter_y")
-                if group_col:
-                    fig = px.scatter(df, x=x_col, y=y_col, color=group_col, title=f"{y_col} vs {x_col} по {group_col}")
-                else:
-                    fig = px.scatter(df, x=x_col, y=y_col, title=f"{y_col} vs {x_col}",
-                                     color_discrete_sequence=[chart_color])
-                st.plotly_chart(fig, width='stretch')
-
-                if df[x_col].dtype in ['int64', 'float64'] and df[y_col].dtype in ['int64', 'float64']:
-                    corr = df[[x_col, y_col]].corr().iloc[0, 1]
-                    st.metric("Корреляция Пирсона", f"{corr:.3f}")
-
-            else:
-                fig = plot_interactive_chart(df, chart_col, chart_type, chart_color, group_col)
-                if fig:
-                    st.plotly_chart(fig, width='stretch')
-
-        # матрица корреляций
-        st.subheader("Матрица корреляций")
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        if len(numeric_cols) > 1:
-            selected_corr = st.multiselect("Выбери колонки для корреляции", numeric_cols,
-                                           default=numeric_cols[:min(10, len(numeric_cols))], key="corr_cols")
-            if len(selected_corr) >= 2:
-                corr_matrix = df[selected_corr].corr()
-                fig = px.imshow(corr_matrix, text_auto=True, aspect="auto", color_continuous_scale="RdBu", zmin=-1,
-                                zmax=1)
-                fig.update_layout(title="Корреляционная матрица", height=500)
-                st.plotly_chart(fig, width='stretch')
-
-    # вкладка 3 (математические модели)
-    with tabs[2]:
-        st.subheader("Математические модели")
-
-        model_type = st.selectbox(
-            "Выбери модель",
-            ["Линейная регрессия", "Логистическая регрессия", "Дерево решений", "Случайный лес", "Градиентный бустинг",
-             "K-Means кластеризация"],
-            key="model_type"
-        )
-
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-
-        if model_type in ["Линейная регрессия", "Логистическая регрессия", "Дерево решений", "Случайный лес",
-                          "Градиентный бустинг"]:
-            if len(numeric_cols) >= 2:
-                target = st.selectbox("Целевая переменная (Y)", numeric_cols, key="target")
-                features = st.multiselect("Признаки (X)", [c for c in numeric_cols if c != target], key="features")
-
-                if st.button("🚀 Обучить модель", key="train_model"):
-                    with st.spinner("Обучаю..."):
-                        X = df[features].dropna()
-                        y = df.loc[X.index, target]  # синхронизируем индексы после дропа na
-
-                        if model_type == "Линейная регрессия":
-                            if y.dtype in ['int64', 'float64']:
-                                model = LinearRegression()
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-
-                                # для p-value юзаем statsmodels
-                                X_sm = sm.add_constant(X)
-                                sm_model = sm.OLS(y, X_sm).fit()
-
-                                col1, col2, col3 = st.columns(3)
-                                col1.metric("R²", f"{r2_score(y, y_pred):.4f}")
-                                col2.metric("RMSE", f"{np.sqrt(mean_squared_error(y, y_pred)):.4f}")
-                                col3.metric("Adj. R²", f"{sm_model.rsquared_adj:.4f}")
-
-                                coef_data = []
-                                for var, coef, pval in zip(sm_model.params.index, sm_model.params.values,
-                                                           sm_model.pvalues):
-                                    stars = ""
-                                    if pval < 0.001:
-                                        stars = "***"
-                                    elif pval < 0.01:
-                                        stars = "**"
-                                    elif pval < 0.05:
-                                        stars = "*"
-                                    coef_data.append(
-                                        {"Признак": var, "Коэффициент": coef, "p-value": pval, "Значимость": stars})
-                                st.dataframe(pd.DataFrame(coef_data), width='stretch')
-
-                                report = get_regression_report_full(sm_model, X_sm, y, features, target)
-                                st.text(report)
-
-                                fig = px.scatter(x=y, y=y_pred, title="Предсказанные vs Фактические")
-                                fig.add_shape(type="line", x0=y.min(), y0=y.min(), x1=y.max(), y1=y.max(),
-                                              line=dict(color="red", dash="dash"))
-                                st.plotly_chart(fig, width='stretch')
-                            else:
-                                st.error("Целевая переменная должна быть числовой для линейной регрессии")
-
-                        elif model_type == "Логистическая регрессия":
-                            if y.nunique() == 2:
-                                model = LogisticRegression(max_iter=1000)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                y_proba = model.predict_proba(X)[:, 1]
-
-                                col1, col2 = st.columns(2)
-                                col1.metric("Accuracy", f"{accuracy_score(y, y_pred):.4f}")
-                                col2.metric("ROC-AUC", f"{roc_auc_score(y, y_proba):.4f}")
-
-                                coef_df = pd.DataFrame({'Признак': features, 'Коэффициент': model.coef_[0]})
-                                st.dataframe(coef_df.sort_values('Коэффициент', key=abs, ascending=False),
-                                             width='stretch')
-                                st.text(classification_report(y, y_pred))
-                            else:
-                                st.error(f"Целевая переменная должна быть бинарной. Сейчас {y.nunique()} значений.")
-
-                        elif model_type == "Дерево решений":
-                            if y.dtype in ['int64', 'float64']:
-                                model = DecisionTreeRegressor(max_depth=5)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                st.metric("R²", f"{r2_score(y, y_pred):.4f}")
-                            else:
-                                model = DecisionTreeClassifier(max_depth=5)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                st.metric("Accuracy", f"{accuracy_score(y, y_pred):.4f}")
-
-                            importance_df = pd.DataFrame({'Признак': features, 'Важность': model.feature_importances_})
-                            st.dataframe(importance_df.sort_values('Важность', ascending=False),
-                                         width='stretch')
-
-                            fig = px.bar(importance_df, x='Важность', y='Признак', orientation='h',
-                                         title="Важность признаков")
-                            st.plotly_chart(fig, width='stretch')
-
-                        elif model_type == "Случайный лес":
-                            if y.dtype in ['int64', 'float64']:
-                                model = RandomForestRegressor(n_estimators=100, max_depth=10)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                st.metric("R²", f"{r2_score(y, y_pred):.4f}")
-                            else:
-                                model = RandomForestClassifier(n_estimators=100, max_depth=10)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                st.metric("Accuracy", f"{accuracy_score(y, y_pred):.4f}")
-
-                            importance_df = pd.DataFrame({'Признак': features, 'Важность': model.feature_importances_})
-                            st.dataframe(importance_df.sort_values('Важность', ascending=False),
-                                         width='stretch')
-
-                            fig = px.bar(importance_df, x='Важность', y='Признак', orientation='h',
-                                         title="Важность признаков")
-                            st.plotly_chart(fig, width='stretch')
-
-                        elif model_type == "Градиентный бустинг":
-                            if y.dtype in ['int64', 'float64']:
-                                model = GradientBoostingRegressor(n_estimators=100, max_depth=5)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                st.metric("R²", f"{r2_score(y, y_pred):.4f}")
-                            else:
-                                model = GradientBoostingClassifier(n_estimators=100, max_depth=5)
-                                model.fit(X, y)
-                                y_pred = model.predict(X)
-                                st.metric("Accuracy", f"{accuracy_score(y, y_pred):.4f}")
-
-                            importance_df = pd.DataFrame({'Признак': features, 'Важность': model.feature_importances_})
-                            st.dataframe(importance_df.sort_values('Важность', ascending=False),
-                                         width='stretch')
-
-                            fig = px.bar(importance_df, x='Важность', y='Признак', orientation='h',
-                                         title="Важность признаков")
-                            st.plotly_chart(fig, width='stretch')
-            else:
-                st.warning(f"Недостаточно числовых колонок. Найдено: {len(numeric_cols)}")
-
-        elif model_type == "K-Means кластеризация":
-            cluster_cols = st.multiselect("Колонки для кластеризации", numeric_cols, key="cluster_cols")
-            n_clusters = st.slider("Количество кластеров", min_value=2, max_value=10, value=3, key="n_clusters")
-            if st.button("Выполнить кластеризацию", key="cluster_btn") and len(cluster_cols) >= 2:
-                X = df[cluster_cols].dropna()
-                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-                df_clustered = X.copy()
-                df_clustered['Cluster'] = kmeans.fit_predict(X)
-                st.dataframe(df_clustered['Cluster'].value_counts().reset_index(), width='stretch')
-                fig = px.scatter(df_clustered, x=cluster_cols[0], y=cluster_cols[1], color='Cluster',
-                                 title="Кластеризация")
-                st.plotly_chart(fig, width='stretch')
-                if st.button("Сохранить кластеры в датасет", key="save_clusters"):
-                    st.session_state.df['Cluster'] = kmeans.predict(df[cluster_cols].fillna(0))
-                    st.success("Колонка 'Cluster' добавлена в датасет")
-                    st.rerun()
-
-    # вкладка 4 (бизнес метрики)
-    with tabs[3]:
-        st.subheader("Бизнес-метрики")
-
-        metric_type = st.selectbox(
-            "Выбери метрику",
-            ["Retention (N+1)", "Cohort анализ", "RFM анализ", "Конверсия в воронке", "LTV (Lifetime Value)",
-             "Churn Rate"],
-            key="metric_type"
-        )
-
-        if metric_type == "Retention (N+1)":
-            st.markdown("""
-            **Retention N+1** — процент пользователей, вернувшихся на следующий день.
-
-            Требуемый формат:
-            - Колонка с ID пользователя
-            - Колонка с датой события
-            """)
-
-            user_col = st.selectbox("Колонка с ID пользователя", df.columns, key="ret_user")
-            date_col = st.selectbox("Колонка с датой", df.columns, key="ret_date")
-
-            if st.button("Рассчитать Retention", key="ret_btn"):
-                try:
-                    df_temp = df.copy()
-                    df_temp[date_col] = pd.to_datetime(df_temp[date_col])
-                    first_actions = df_temp.groupby(user_col)[date_col].min().reset_index()
-                    first_actions.columns = [user_col, 'first_date']
-
-                    df_temp['day_diff'] = (df_temp[date_col] - df_temp[user_col].map(
-                        first_actions.set_index(user_col)['first_date'])).dt.days
-                    retention_df = df_temp[df_temp['day_diff'] == 1].groupby(user_col).size().reset_index()
-                    retention_rate = len(retention_df) / len(first_actions) * 100
-
-                    st.metric("Retention N+1", f"{retention_rate:.2f}%")
-                    st.success(f"Из {len(first_actions)} пользователей вернулись {len(retention_df)}")
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-
-        elif metric_type == "Cohort анализ":
-            st.info("Группировка пользователей по дате первого действия")
-            user_col = st.selectbox("Колонка с ID пользователя", df.columns, key="cohort_user")
-            date_col = st.selectbox("Колонка с датой", df.columns, key="cohort_date")
-
-            if st.button("Построить Cohort", key="cohort_btn"):
-                try:
-                    df_temp = df.copy()
-                    df_temp[date_col] = pd.to_datetime(df_temp[date_col])
-                    first_actions = df_temp.groupby(user_col)[date_col].min().reset_index()
-                    first_actions['cohort'] = first_actions[date_col].dt.strftime('%Y-%m')
-
-                    df_temp = df_temp.merge(first_actions[[user_col, 'cohort']], on=user_col)
-                    df_temp['period'] = (df_temp[date_col].dt.year - df_temp['cohort'].str[:4].astype(int)) * 12 + (
-                                df_temp[date_col].dt.month - df_temp['cohort'].str[5:7].astype(int))
-
-                    cohort_data = df_temp.groupby(['cohort', 'period'])[user_col].nunique().reset_index()
-                    cohort_pivot = cohort_data.pivot(index='cohort', columns='period', values=user_col)
-
-                    st.dataframe(cohort_pivot, width='stretch')
-
-                    fig = px.imshow(cohort_pivot, text_auto=True, aspect="auto", color_continuous_scale="Greens")
-                    fig.update_layout(title="Cohort анализ")
-                    st.plotly_chart(fig, width='stretch')
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-
-        elif metric_type == "RFM анализ":
-            st.markdown("**RFM** — Recency, Frequency, Monetary")
-            user_col = st.selectbox("Колонка с ID пользователя", df.columns, key="rfm_user")
-            date_col = st.selectbox("Колонка с датой", df.columns, key="rfm_date")
-            value_col = st.selectbox("Колонка с суммой", df.select_dtypes(include=['number']).columns, key="rfm_value")
-
-            if st.button("Рассчитать RFM", key="rfm_btn"):
-                try:
-                    df_temp = df.copy()
-                    df_temp[date_col] = pd.to_datetime(df_temp[date_col])
-                    now = df_temp[date_col].max()
-
-                    rfm = df_temp.groupby(user_col).agg({
-                        date_col: lambda x: (now - x.max()).days,
-                        user_col: 'count',
-                        value_col: 'sum'
-                    }).rename(columns={date_col: 'Recency', user_col: 'Frequency', value_col: 'Monetary'})
-
-                    st.dataframe(rfm, width='stretch')
-
-                    rfm['R_score'] = pd.qcut(rfm['Recency'], 4, labels=['4', '3', '2', '1'])
-                    rfm['F_score'] = pd.qcut(rfm['Frequency'].rank(method='first'), 4, labels=['1', '2', '3', '4'])
-                    rfm['M_score'] = pd.qcut(rfm['Monetary'].rank(method='first'), 4, labels=['1', '2', '3', '4'])
-                    rfm['RFM_score'] = rfm['R_score'].astype(str) + rfm['F_score'].astype(str) + rfm['M_score'].astype(
-                        str)
-
-                    st.subheader("RFM сегменты")
-                    st.dataframe(rfm['RFM_score'].value_counts(), width='stretch')
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-
-        elif metric_type == "Конверсия в воронке":
-            st.info("Анализ воронки: шаги → конверсия")
-            step_col = st.selectbox("Колонка с шагами", df.columns, key="funnel_col")
-
-            if st.button("Построить воронку", key="funnel_btn"):
-                funnel = df[step_col].value_counts().reset_index()
-                funnel.columns = ['Шаг', 'Количество']
-
-                fig = go.Figure(go.Funnel(
-                    y=funnel['Шаг'],
-                    x=funnel['Количество'],
-                    textposition="inside",
-                    textinfo="value+percent initial"
-                ))
-                fig.update_layout(title="Воронка конверсии")
-                st.plotly_chart(fig, width='stretch')
-
-        elif metric_type == "LTV (Lifetime Value)":
-            st.markdown("**LTV** — средняя выручка с одного пользователя за всё время")
-            user_col = st.selectbox("Колонка с ID пользователя", df.columns, key="ltv_user")
-            value_col = st.selectbox("Колонка с суммой", df.select_dtypes(include=['number']).columns, key="ltv_value")
-
-            if st.button("Рассчитать LTV", key="ltv_btn"):
-                ltv = df.groupby(user_col)[value_col].sum().mean()
-                st.metric("Средний LTV", f"{ltv:.2f}")
-                st.success("LTV = сумма всех покупок пользователя / количество пользователей")
-
-        elif metric_type == "Churn Rate":
-            st.markdown("**Churn Rate** — процент пользователей, которые прекратили использование")
-            user_col = st.selectbox("Колонка с ID пользователя", df.columns, key="churn_user")
-            date_col = st.selectbox("Колонка с датой", df.columns, key="churn_date")
-            period = st.selectbox("Период для оттока", ["7 дней", "14 дней", "30 дней", "60 дней"], key="churn_period")
-
-            if st.button("Рассчитать Churn Rate", key="churn_btn"):
-                try:
-                    days = int(period.split()[0])
-                    df_temp = df.copy()
-                    df_temp[date_col] = pd.to_datetime(df_temp[date_col])
-                    now = df_temp[date_col].max()
-                    cutoff = now - pd.Timedelta(days=days)
-
-                    active_users = set(df_temp[df_temp[date_col] > cutoff][user_col].unique())
-                    all_users = set(df_temp[user_col].unique())
-                    churned = all_users - active_users
-                    churn_rate = len(churned) / len(all_users) * 100
-
-                    st.metric("Churn Rate", f"{churn_rate:.2f}%")
-                    st.info(f"За {period}: {len(churned)} из {len(all_users)} пользователей не проявляли активность")
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-
-    # вкладка 5 (справочник пандас)
-    with tabs[4]:
-        st.subheader("📚 Справочник pandas")
-
-        # Умный поиск
-        search = st.text_input("🔍 Поиск (что хочешь сделать?)",
-                               placeholder="например: фильтр, группировка, объединить таблицы, удалить пропуски...")
-
-        # Категории
-        category = st.selectbox(
-            "📂 Категория",
-            [
-                "Все",
-                "Чтение и запись",
-                "Просмотр данных",
-                "Фильтрация и сортировка",
-                "Работа с колонками",
-                "Очистка данных",
-                "Агрегация и группировка",
-                "Объединение данных",
-                "Работа с датами",
-                "Статистика"
-            ]
-        )
-
-        # База знаний
-        knowledge_base = {
-            "Чтение и запись": [
-                {"name": "pd.read_csv()", "desc": "Чтение CSV файла", "example": "df = pd.read_csv('file.csv')",
-                 "params": "sep=';', encoding='utf-8', nrows=1000"},
-                {"name": "pd.read_excel()", "desc": "Чтение Excel файла",
-                 "example": "df = pd.read_excel('file.xlsx', sheet_name='Sheet1')"},
-                {"name": "df.to_csv()", "desc": "Сохранить в CSV", "example": "df.to_csv('output.csv', index=False)"},
-                {"name": "df.to_excel()", "desc": "Сохранить в Excel",
-                 "example": "df.to_excel('output.xlsx', index=False)"},
-            ],
-            "Просмотр данных": [
-                {"name": "df.head(n)", "desc": "Первые n строк", "example": "df.head(10)"},
-                {"name": "df.tail(n)", "desc": "Последние n строк", "example": "df.tail(5)"},
-                {"name": "df.sample(n)", "desc": "Случайные n строк", "example": "df.sample(100)"},
-                {"name": "df.info()", "desc": "Информация о датасете (типы, память)", "example": "df.info()"},
-                {"name": "df.describe()", "desc": "Статистика по числовым колонкам", "example": "df.describe()"},
-                {"name": "df.shape", "desc": "Размерность (строки, колонки)", "example": "df.shape"},
-                {"name": "df.columns", "desc": "Список колонок", "example": "df.columns.tolist()"},
-                {"name": "df.dtypes", "desc": "Типы данных колонок", "example": "df.dtypes"},
-                {"name": "df.nunique()", "desc": "Количество уникальных значений", "example": "df['city'].nunique()"},
-                {"name": "df.value_counts()", "desc": "Частота значений", "example": "df['status'].value_counts()"},
-            ],
-            "Фильтрация и сортировка": [
-                {"name": "df[условие]", "desc": "Фильтрация строк", "example": "df[df['age'] > 18]"},
-                {"name": "df.query()", "desc": "Фильтрация через строку",
-                 "example": "df.query('age > 18 and city == \"Moscow\"')"},
-                {"name": "df.isin()", "desc": "Фильтр по списку значений",
-                 "example": "df[df['city'].isin(['Moscow', 'SPb'])]"},
-                {"name": "df.str.contains()", "desc": "Фильтр по тексту",
-                 "example": "df[df['name'].str.contains('John')]"},
-                {"name": "df.sort_values()", "desc": "Сортировка", "example": "df.sort_values('age', ascending=False)"},
-                {"name": "df.nlargest()", "desc": "N самых больших", "example": "df.nlargest(10, 'salary')"},
-                {"name": "df.nsmallest()", "desc": "N самых маленьких", "example": "df.nsmallest(5, 'price')"},
-            ],
-            "Работа с колонками": [
-                {"name": "df['new'] = ...", "desc": "Создать новую колонку",
-                 "example": "df['total'] = df['price'] * df['qty']"},
-                {"name": "df.drop()", "desc": "Удалить колонку", "example": "df.drop('col', axis=1)"},
-                {"name": "df.rename()", "desc": "Переименовать колонку",
-                 "example": "df.rename(columns={'old': 'new'})"},
-                {"name": "df.astype()", "desc": "Изменить тип колонки",
-                 "example": "df['age'] = df['age'].astype('int')"},
-                {"name": "pd.to_datetime()", "desc": "Преобразовать в дату",
-                 "example": "df['date'] = pd.to_datetime(df['date'])"},
-                {"name": "df.select_dtypes()", "desc": "Выбрать колонки по типу",
-                 "example": "df.select_dtypes(include=['number'])"},
-                {"name": "df[['col1', 'col2']]", "desc": "Выбрать несколько колонок", "example": "df[['name', 'age']]"},
-            ],
-            "Очистка данных": [
-                {"name": "df.dropna()", "desc": "Удалить строки с пропусками", "example": "df.dropna()"},
-                {"name": "df.fillna()", "desc": "Заполнить пропуски",
-                 "example": "df.fillna(0) или df.fillna(df.mean())"},
-                {"name": "df.interpolate()", "desc": "Интерполяция пропусков", "example": "df.interpolate()"},
-                {"name": "df.drop_duplicates()", "desc": "Удалить дубликаты",
-                 "example": "df.drop_duplicates(subset=['name'])"},
-                {"name": "df.replace()", "desc": "Заменить значения", "example": "df['city'].replace('Msk', 'Moscow')"},
-                {"name": "df.rename()", "desc": "Переименовать", "example": "df.rename(columns={'old': 'new'})"},
-                {"name": "df.reset_index()", "desc": "Сбросить индекс", "example": "df.reset_index(drop=True)"},
-                {"name": "df.apply()", "desc": "Применить функцию", "example": "df['age'].apply(lambda x: x*2)"},
-            ],
-            "Агрегация и группировка": [
-                {"name": "df.groupby()", "desc": "Группировка", "example": "df.groupby('city')['sales'].sum()"},
-                {"name": "df.pivot_table()", "desc": "Сводная таблица",
-                 "example": "pd.pivot_table(df, values='sales', index='city', columns='product')"},
-                {"name": "df.agg()", "desc": "Множественная агрегация",
-                 "example": "df.groupby('city')['sales'].agg(['sum', 'mean', 'count'])"},
-                {"name": "pd.crosstab()", "desc": "Таблица сопряжённости",
-                 "example": "pd.crosstab(df['gender'], df['survived'])"},
-                {"name": "df.rolling()", "desc": "Скользящее окно", "example": "df['sales'].rolling(7).mean()"},
-                {"name": "df.cumsum()", "desc": "Кумулятивная сумма", "example": "df['sales'].cumsum()"},
-                {"name": "df.rank()", "desc": "Ранжирование", "example": "df['score'].rank(ascending=False)"},
-            ],
-            "Объединение данных": [
-                {"name": "pd.concat()", "desc": "Объединить по строкам", "example": "pd.concat([df1, df2])"},
-                {"name": "pd.merge()", "desc": "Объединить по колонке (JOIN)",
-                 "example": "pd.merge(df1, df2, on='id', how='left')"},
-                {"name": "df.join()", "desc": "Объединить по индексу", "example": "df1.join(df2)"},
-                {"name": "df.append()", "desc": "Добавить строки (устарело)", "example": "pd.concat([df1, df2])"},
-            ],
-            "Работа с датами": [
-                {"name": "pd.to_datetime()", "desc": "Преобразовать в дату",
-                 "example": "df['date'] = pd.to_datetime(df['date'])"},
-                {"name": "df.dt.year", "desc": "Извлечь год", "example": "df['year'] = df['date'].dt.year"},
-                {"name": "df.dt.month", "desc": "Извлечь месяц", "example": "df['month'] = df['date'].dt.month"},
-                {"name": "df.dt.dayofweek", "desc": "День недели",
-                 "example": "df['weekday'] = df['date'].dt.dayofweek"},
-                {"name": "df.diff()", "desc": "Разница между датами",
-                 "example": "df['days_diff'] = df['date'].diff().dt.days"},
-                {"name": "pd.date_range()", "desc": "Создать диапазон дат",
-                 "example": "pd.date_range('2024-01-01', periods=30, freq='D')"},
-            ],
-            "Статистика": [
-                {"name": "df.mean()", "desc": "Среднее", "example": "df['age'].mean()"},
-                {"name": "df.median()", "desc": "Медиана", "example": "df['salary'].median()"},
-                {"name": "df.std()", "desc": "Стандартное отклонение", "example": "df['price'].std()"},
-                {"name": "df.corr()", "desc": "Корреляция", "example": "df[['age', 'salary']].corr()"},
-                {"name": "df.quantile()", "desc": "Квартиль", "example": "df['age'].quantile(0.75)"},
-                {"name": "df.min() / df.max()", "desc": "Минимум / максимум",
-                 "example": "df['price'].min(), df['price'].max()"},
-            ],
-        }
-
-
-        # Функция поиска
-        def search_functions(query, category):
-            results = []
-            query_lower = query.lower()
-
-            cats = [category] if category != "Все" else list(knowledge_base.keys())
-
-            for cat in cats:
-                for func in knowledge_base.get(cat, []):
-                    if (query_lower in func['name'].lower() or
-                            query_lower in func['desc'].lower() or
-                            query_lower in func['example'].lower()):
-                        results.append((cat, func))
-            return results
-
-
-        # Отображение результатов
-        if search:
-            results = search_functions(search, category)
-
-            if results:
-                st.subheader(f"🔍 Найдено {len(results)} функций")
-                for cat, func in results:
-                    with st.expander(f"📌 {func['name']} — {func['desc']}"):
-                        st.markdown(f"**Описание:** {func['desc']}")
-                        st.markdown(f"**Пример:** `{func['example']}`")
-                        if 'params' in func:
-                            st.markdown(f"**Параметры:** {func['params']}")
-                        st.markdown(f"**Категория:** {cat}")
-                        if st.button(f"📋 Скопировать", key=f"copy_{func['name']}"):
-                            st.code(func['example'], language='python')
-            else:
-                st.warning("Ничего не найдено. Попробуй другие ключевые слова.")
-
-        else:
-            # Показываем все функции по категориям
-            cats = [category] if category != "Все" else list(knowledge_base.keys())
-
-            for cat in cats:
-                st.subheader(f"📁 {cat}")
-
-                # Разбиваем на колонки для компактности
-                cols = st.columns(2)
-                for i, func in enumerate(knowledge_base[cat]):
-                    with cols[i % 2]:
-                        with st.expander(f"🔹 {func['name']}"):
-                            st.markdown(f"**{func['desc']}**")
-                            st.code(func['example'], language='python')
-                            if 'params' in func:
-                                st.caption(f"Параметры: {func['params']}")
-
-else:
-    # пустое состояние лендинг с карточками
-    st.title("📊 StatSnap PRO")
-
+# основной экран приложения
+if st.session_state.df is None:
+    # чистый лендинг без ии-клише
     st.markdown("""
-    <div style="text-align: center; padding: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; margin-bottom: 30px;">
-        <h1 style="color: white; margin-bottom: 10px;">😎 Профессиональный анализ данных</h1>
-        <p style="color: white; font-size: 18px;">Загрузи данные и настраивай интерактивные графики, регрессию, бизнес-метрики</p>
+    <div class="welcome-panel">
+        <h2 style="margin: 0 0 8px 0; font-weight: 700; letter-spacing: -0.02em;">StatSnap</h2>
+        <div style="font-size: 14px; opacity: 0.85;">
+            Локальный аналитический комплекс экспресс-анализа, статистического моделирования и продуктовых метрик.
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -936,66 +268,624 @@ else:
 
     with col1:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; min-height: 220px; display: flex; flex-direction: column; justify-content: center;">
-            <h2 style="margin: 0 0 10px 0;">📈</h2>
-            <h3 style="margin: 0 0 10px 0;">Визуализация</h3>
-            <p style="margin: 0; font-size: 14px;">Гистограммы, boxplot'ы, scatter plot, круговые диаграммы, матрица корреляций</p>
-            <small style="margin-top: 10px;">Интерактивные графики с zoom и hover</small>
+        <div class="hero-card">
+            <span class="hero-tag">АНАЛИЗ И ГРАФИКИ</span>
+            <div class="hero-title">Интерактивная визуализация</div>
+            <div class="hero-desc">
+                Многомерные проекции, автоматическое сэмплирование для защиты от зависания браузера, 
+                матрица попарных корреляций, гистограммы распределений и боксплоты.
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
     with col2:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; min-height: 220px; display: flex; flex-direction: column; justify-content: center;">
-            <h2 style="margin: 0 0 10px 0;">🧠</h2>
-            <h3 style="margin: 0 0 10px 0;">Математические модели</h3>
-            <p style="margin: 0; font-size: 14px;">Линейная регрессия, логистическая регрессия, дерево решений, случайный лес, бустинг, кластеризация</p>
-            <small style="margin-top: 10px;">R², RMSE, коэффициенты, p-value</small>
+        <div class="hero-card">
+            <span class="hero-tag">МОДЕЛИ И СТАТИСТИКА</span>
+            <div class="hero-title">Машинное обучение</div>
+            <div class="hero-desc">
+                Регрессия OLS с p-value и проверкой значимости параметров, логистическая классификация, 
+                деревья решений, ансамбли (Random Forest, Gradient Boosting) и K-Means.
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
     with col3:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; min-height: 220px; display: flex; flex-direction: column; justify-content: center;">
-            <h2 style="margin: 0 0 10px 0;">📊</h2>
-            <h3 style="margin: 0 0 10px 0;">Бизнес-метрики</h3>
-            <p style="margin: 0; font-size: 14px;">Retention N+1, Cohort анализ, RFM, воронка конверсии, LTV, Churn Rate</p>
-            <small style="margin-top: 10px;">Профессиональные метрики для аналитики</small>
+        <div class="hero-card">
+            <span class="hero-tag">ПРОДУКТОВЫЙ БЛОК</span>
+            <div class="hero-title">Бизнес-аналитика</div>
+            <div class="hero-desc">
+                Когортный анализ с визуализацией оттока, N+1 Retention, 
+                корректная RFM-сегментация без вылетов на дубликатах, воронка конверсии и расчет LTV.
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
-    st.divider()
+    st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
 
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        st.markdown("""
-        ### 📁 Как начать
-
-        1. Загрузить CSV или Excel файл в левой панели
-        2. Выбрать нужную вкладку:
-           - **Данные** — отслеживай данные датасета в реальном времени
-           - **Визуализация** — построение интерактивных графиков
-           - **Мат. модель** — обучение регрессии, классификации, кластеризации
-           - **Метрики** — счет бизнес-показателей
-        3. Наслаждаться комфортным, наглядным интерактивным анализом!
-        """)
-
-    with col_right:
-        st.markdown("""
-        ### 📊 Форматы данных
-
-        Поддерживаются:
-        - CSV (любые разделители: , ; \\t)
-        - Excel (.xlsx, .xls)
-
-        **Рекомендуется:** самостоятельно привести датасет в порядок
-        """)
-
-    st.divider()
-
+    st.markdown("#### Быстрый старт")
     st.markdown("""
-    <div style="text-align: center; color: #666; padding: 20px;">
-        <p>StatSnap PRO - локальный инструмент аналитика 🔥 | Created by BearCodex with Streamlit framework</p>
-    </div>
-    """, unsafe_allow_html=True)
+    1. Загрузите файл через левую панель в формате `.csv`, `.tsv`, `.xlsx` или `.xls`.
+    2. Приложение автоматически определит разделитель, восстановит кодировку (включая кириллический `Windows-1251`) и проведет даункастинг типов данных для экономии RAM.
+    3. Выберите соответствующий раздел для работы с выборкой.
+    """)
+
+else:
+    df = st.session_state.df
+
+    # навигационные вкладки
+    tab_data, tab_viz, tab_ml, tab_metrics, tab_docs = st.tabs([
+        "Таблица данных",
+        "Визуализация",
+        "Моделирование",
+        "Бизнес-метрики",
+        "Справочник pandas"
+    ])
+
+    # ---------------------------------------------------------
+    # вкладка 1: таблица данных и инспектор типов
+    # ---------------------------------------------------------
+    with tab_data:
+        st.markdown("#### Просмотр выборки")
+        st.dataframe(df, use_container_width=True, height=360)
+
+        col_left, col_right = st.columns([1, 1])
+
+        with col_left:
+            st.markdown("#### Структура признаков")
+            col_info = []
+            total_rows = len(df)
+            for c in df.columns:
+                nulls = int(df[c].isnull().sum())
+                null_pct = (nulls / total_rows * 100) if total_rows > 0 else 0
+                col_info.append({
+                    "Колонка": c,
+                    "Тип": str(df[c].dtype),
+                    "Пропуски": f"{nulls} ({null_pct:.1f}%)",
+                    "Уникальных": df[c].nunique(dropna=True)
+                })
+            st.dataframe(pd.DataFrame(col_info), use_container_width=True, height=260)
+
+        with col_right:
+            st.markdown("#### Инструменты очистки")
+            with st.expander("Удаление дубликатов", expanded=False):
+                dups = int(df.duplicated().sum())
+                st.write(f"Обнаружено полных дубликатов строк: **{dups}**")
+                if st.button("Удалить дубликаты строк", disabled=(dups == 0)):
+                    st.session_state.df = df.drop_duplicates().reset_index(drop=True)
+                    st.success(f"Удалено строк: {dups}")
+                    st.rerun()
+
+            with st.expander("Обработка пропусков (NA)", expanded=False):
+                na_col = st.selectbox("Колонка с пропусками", [c for c in df.columns if df[c].isnull().any()] or ["Нет колонок с NA"])
+                if na_col != "Нет колонок с NA":
+                    na_method = st.radio("Стратегия заполнения", ["Медиана", "Среднее", "Константа 0", "Удалить строки с NA"], horizontal=True)
+                    if st.button("Применить к колонке"):
+                        df_mod = df.copy()
+                        if na_method == "Медиана" and pd.api.types.is_numeric_dtype(df_mod[na_col]):
+                            df_mod[na_col] = df_mod[na_col].fillna(df_mod[na_col].median())
+                        elif na_method == "Среднее" and pd.api.types.is_numeric_dtype(df_mod[na_col]):
+                            df_mod[na_col] = df_mod[na_col].fillna(df_mod[na_col].mean())
+                        elif na_method == "Константа 0":
+                            df_mod[na_col] = df_mod[na_col].fillna(0)
+                        elif na_method == "Удалить строки с NA":
+                            df_mod = df_mod.dropna(subset=[na_col])
+                        st.session_state.df = df_mod
+                        st.success(f"Обработана колонка: {na_col}")
+                        st.rerun()
+
+            with st.expander("Удаление колонки", expanded=False):
+                col_to_drop = st.selectbox("Выберите колонку для удаления", df.columns)
+                if st.button("Удалить колонку"):
+                    st.session_state.df = df.drop(columns=[col_to_drop])
+                    st.success(f"Колонка {col_to_drop} удалена")
+                    st.rerun()
+
+    # ---------------------------------------------------------
+    # вкладка 2: визуализация
+    # ---------------------------------------------------------
+    with tab_viz:
+        st.markdown("#### Экспресс-визуализация")
+
+        v_col1, v_col2 = st.columns([1, 2])
+
+        with v_col1:
+            chart_type = st.selectbox(
+                "Тип графика",
+                ["Диаграмма рассеяния (Scatter)", "Гистограмма", "Boxplot", "Линейный тренд", "Круговая диаграмма (Категории)"]
+            )
+            target_col = st.selectbox("Основная переменная (X / Значение)", df.columns, key="v_target")
+
+            y_col = None
+            if chart_type in ["Диаграмма рассеяния (Scatter)", "Линейный тренд"]:
+                num_cols = df.select_dtypes(include=['number']).columns.tolist()
+                y_col = st.selectbox("Вторая переменная (Y)", [c for c in num_cols if c != target_col] or df.columns.tolist(), key="v_y")
+
+            group_choice = st.selectbox("Группировка по категории", ["Без группировки"] + list(df.columns), key="v_group")
+            group_col = None if group_choice == "Без группировки" else group_choice
+
+        with v_col2:
+            # сэмплирование для plotly чтобы не забивать память браузера
+            max_plot_points = 5000
+            needs_sampling = len(df) > max_plot_points
+            plot_df = df.sample(max_plot_points, random_state=42) if needs_sampling else df
+
+            if needs_sampling and chart_type in ["Диаграмма рассеяния (Scatter)", "Boxplot"]:
+                st.caption(f"Для сохранения плавности интерфейса отображено {max_plot_points:,} сэмплированных точек из {len(df):,}")
+
+            fig = None
+            if chart_type == "Диаграмма рассеяния (Scatter)" and y_col:
+                fig = px.scatter(
+                    plot_df, x=target_col, y=y_col, color=group_col,
+                    template="plotly_white",
+                    title=f"Взаимосвязь: {target_col} и {y_col}"
+                )
+                if pd.api.types.is_numeric_dtype(df[target_col]) and pd.api.types.is_numeric_dtype(df[y_col]):
+                    valid_data = df[[target_col, y_col]].dropna()
+                    if len(valid_data) > 1:
+                        corr_val = valid_data[target_col].corr(valid_data[y_col])
+                        st.metric("Коэффициент корреляции Пирсона", f"{corr_val:.4f}")
+
+            elif chart_type == "Гистограмма":
+                fig = px.histogram(
+                    plot_df, x=target_col, color=group_col,
+                    barmode="overlay" if group_col else "relative",
+                    template="plotly_white",
+                    title=f"Распределение признака: {target_col}"
+                )
+
+            elif chart_type == "Boxplot":
+                fig = px.box(
+                    plot_df, y=target_col, x=group_col, color=group_col,
+                    template="plotly_white",
+                    title=f"Диаграмма размаха: {target_col}"
+                )
+
+            elif chart_type == "Линейный тренд" and y_col:
+                fig = px.line(
+                    plot_df.sort_values(by=target_col), x=target_col, y=y_col, color=group_col,
+                    template="plotly_white",
+                    title=f"Тренд: {y_col} относительно {target_col}"
+                )
+
+            elif chart_type == "Круговая диаграмма (Категории)":
+                val_counts = df[target_col].value_counts().head(20).reset_index()
+                val_counts.columns = [target_col, 'count']
+                fig = px.pie(
+                    val_counts, names=target_col, values='count',
+                    template="plotly_white",
+                    title=f"Топ-20 категорий: {target_col}"
+                )
+
+            if fig:
+                fig.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=420)
+                st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("#### Корреляционный анализ")
+        num_features = df.select_dtypes(include=['number']).columns.tolist()
+        if len(num_features) >= 2:
+            default_cols = num_features[:min(8, len(num_features))]
+            selected_corr = st.multiselect("Признаки для матрицы", num_features, default=default_cols)
+            if len(selected_corr) >= 2:
+                corr_sub = df[selected_corr].corr()
+                fig_corr = px.imshow(
+                    corr_sub,
+                    text_auto=".2f",
+                    color_continuous_scale="RdBu_r",
+                    zmin=-1, zmax=1,
+                    template="plotly_white"
+                )
+                fig_corr.update_layout(margin=dict(l=20, r=20, t=20, b=20), height=380)
+                st.plotly_chart(fig_corr, use_container_width=True)
+        else:
+            st.info("В датасете недостаточно числовых полей для построения матрицы корреляции.")
+
+    # ---------------------------------------------------------
+    # вкладка 3: математические модели и машинное обучение
+    # ---------------------------------------------------------
+    with tab_ml:
+        st.markdown("#### Обучение и валидация моделей")
+
+        m_type = st.selectbox(
+            "Алгоритм моделирования",
+            [
+                "Линейная регрессия (OLS с p-value)",
+                "Логистическая регрессия",
+                "Дерево решений (Decision Tree)",
+                "Случайный лес (Random Forest)",
+                "Градиентный бустинг (Gradient Boosting)",
+                "Кластеризация (K-Means)"
+            ]
+        )
+
+        all_numeric = df.select_dtypes(include=['number']).columns.tolist()
+
+        if m_type != "Кластеризация (K-Means)":
+            if len(df.columns) < 2:
+                st.warning("Недостаточно колонок для построения предсказательной модели.")
+            else:
+                col_m1, col_m2 = st.columns([1, 2])
+
+                with col_m1:
+                    target_var = st.selectbox("Целевая переменная (Y)", df.columns, key="ml_target")
+                    available_features = [c for c in df.columns if c != target_var]
+
+                    # автоматическое предложение только числовых колонок для признаков
+                    default_feats = [c for c in available_features if c in all_numeric][:5]
+                    feature_vars = st.multiselect("Входные признаки (X)", available_features, default=default_feats, key="ml_feats")
+
+                    use_split = st.checkbox("Валидационная выборка (Train / Test 80/20)", value=True)
+
+                    # явный выбор типа задачи для деревьев и бустинга
+                    task_kind = "Авто"
+                    if m_type in ["Дерево решений (Decision Tree)", "Случайный лес (Random Forest)", "Градиентный бустинг (Gradient Boosting)"]:
+                        task_kind = st.radio("Тип задачи", ["Авто", "Классификация", "Регрессия"], horizontal=True)
+
+                    btn_train = st.button("Запустить обучение", use_container_width=True)
+
+                with col_m2:
+                    if btn_train:
+                        if not feature_vars:
+                            st.error("Выберите хотя бы один признак в X.")
+                        else:
+                            # безопасная чистка NaN в признаках и таргете одновременно
+                            model_data = df[feature_vars + [target_var]].dropna()
+                            if len(model_data) < 10:
+                                st.error("Слишком мало наблюдений после очистки пропусков.")
+                            else:
+                                X_raw = model_data[feature_vars]
+                                y_raw = model_data[target_var]
+
+                                # кодирование категориальных признаков в X
+                                X_mat = pd.get_dummies(X_raw, drop_first=True)
+
+                                # определение типа задачи
+                                is_classification = False
+                                if m_type == "Логистическая регрессия":
+                                    is_classification = True
+                                elif task_kind == "Классификация":
+                                    is_classification = True
+                                elif task_kind == "Регрессия":
+                                    is_classification = False
+                                else:
+                                    is_classification = y_raw.nunique() <= 5 or not pd.api.types.is_numeric_dtype(y_raw)
+
+                                # подготовка таргета
+                                y_mat = y_raw
+                                label_encoder = None
+                                if is_classification:
+                                    label_encoder = LabelEncoder()
+                                    y_mat = label_encoder.fit_transform(y_raw.astype(str))
+
+                                # разбивка на обучающую и тестовую выборки
+                                if use_split and len(model_data) > 30:
+                                    X_train, X_test, y_train, y_test = train_test_split(
+                                        X_mat, y_mat, test_size=0.2, random_state=42
+                                    )
+                                else:
+                                    X_train, X_test, y_train, y_test = X_mat, X_mat, y_mat, y_mat
+
+                                # запуск соответствующей модели
+                                if m_type == "Линейная регрессия (OLS с p-value)":
+                                    if is_classification:
+                                        st.warning("Целевая переменная похожа на категорию. Для классификации используйте Логистическую регрессию.")
+                                    reg = LinearRegression().fit(X_train, y_train)
+                                    y_pred = reg.predict(X_test)
+
+                                    # статистика statsmodels
+                                    X_sm = sm.add_constant(X_train)
+                                    sm_res = sm.OLS(y_train, X_sm).fit()
+
+                                    c_res1, c_res2, c_res3 = st.columns(3)
+                                    c_res1.metric("R² (Test)", f"{r2_score(y_test, y_pred):.4f}")
+                                    c_res2.metric("RMSE", f"{np.sqrt(mean_squared_error(y_test, y_pred)):.4f}")
+                                    c_res3.metric("R² Adj (Train)", f"{sm_res.rsquared_adj:.4f}")
+
+                                    st.code(explain_linear_regression(sm_res, y_test, y_pred, X_mat.columns, target_var))
+
+                                    # график факт против прогноза
+                                    fig_pred = px.scatter(
+                                        x=y_test, y=y_pred,
+                                        labels={'x': 'Фактические значения', 'y': 'Предсказанные значения'},
+                                        title="Сравнение факта и прогноза",
+                                        template="plotly_white"
+                                    )
+                                    fig_pred.add_trace(go.Scatter(
+                                        x=[y_test.min(), y_test.max()], y=[y_test.min(), y_test.max()],
+                                        mode='lines', line=dict(color='red', dash='dash'), name='Идеальный прогноз'
+                                    ))
+                                    fig_pred.update_layout(height=340, margin=dict(l=20, r=20, t=30, b=20))
+                                    st.plotly_chart(fig_pred, use_container_width=True)
+
+                                elif m_type == "Логистическая регрессия":
+                                    clf = LogisticRegression(max_iter=1000).fit(X_train, y_train)
+                                    y_pred = clf.predict(X_test)
+
+                                    acc = accuracy_score(y_test, y_pred)
+                                    st.metric("Точность (Accuracy)", f"{acc:.4f}")
+
+                                    # roc-auc для бинарной задачи
+                                    if len(np.unique(y_mat)) == 2:
+                                        y_proba = clf.predict_proba(X_test)[:, 1]
+                                        auc = roc_auc_score(y_test, y_proba)
+                                        st.metric("ROC-AUC", f"{auc:.4f}")
+
+                                    st.text("Подробный классификационный отчет:")
+                                    target_names = [str(c) for c in label_encoder.classes_] if label_encoder else None
+                                    st.code(classification_report(y_test, y_pred, target_names=target_names))
+
+                                else:
+                                    # деревья, леса и бустинги
+                                    model = None
+                                    if m_type == "Дерево решений (Decision Tree)":
+                                        model = DecisionTreeClassifier(max_depth=5) if is_classification else DecisionTreeRegressor(max_depth=5)
+                                    elif m_type == "Случайный лес (Random Forest)":
+                                        model = RandomForestClassifier(n_estimators=100, max_depth=8) if is_classification else RandomForestRegressor(n_estimators=100, max_depth=8)
+                                    elif m_type == "Градиентный бустинг (Gradient Boosting)":
+                                        model = GradientBoostingClassifier(n_estimators=100) if is_classification else GradientBoostingRegressor(n_estimators=100)
+
+                                    model.fit(X_train, y_train)
+                                    y_pred = model.predict(X_test)
+
+                                    if is_classification:
+                                        st.metric("Accuracy (Test)", f"{accuracy_score(y_test, y_pred):.4f}")
+                                        target_names = [str(c) for c in label_encoder.classes_] if label_encoder else None
+                                        st.code(classification_report(y_test, y_pred, target_names=target_names))
+                                    else:
+                                        st.metric("R² (Test)", f"{r2_score(y_test, y_pred):.4f}")
+                                        st.metric("RMSE", f"{np.sqrt(mean_squared_error(y_test, y_pred)):.4f}")
+
+                                    # график важности признаков
+                                    importances = pd.DataFrame({
+                                        'Признак': X_mat.columns,
+                                        'Важность': model.feature_importances_
+                                    }).sort_values(by='Важность', ascending=True)
+
+                                    fig_imp = px.bar(
+                                        importances, x='Важность', y='Признак', orientation='h',
+                                        title="Важность признаков (Feature Importance)",
+                                        template="plotly_white"
+                                    )
+                                    fig_imp.update_layout(height=340, margin=dict(l=20, r=20, t=30, b=20))
+                                    st.plotly_chart(fig_imp, use_container_width=True)
+
+        else:
+            # кластеризация k-means с сохранением результата
+            st.markdown("##### Кластеризация K-Means")
+            c_cols = st.multiselect("Признаки для кластеризации", all_numeric, default=all_numeric[:min(4, len(all_numeric))])
+            n_clusters = st.slider("Число кластеров (k)", min_value=2, max_value=8, value=3)
+
+            if len(c_cols) >= 2:
+                if st.button("Рассчитать кластеры"):
+                    clean_cl = df[c_cols].dropna()
+                    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit(clean_cl)
+                    labels = km.labels_
+
+                    st.session_state['last_cluster_result'] = {
+                        'indices': clean_cl.index,
+                        'labels': labels
+                    }
+
+                    # визуализация кластеров
+                    df_viz = clean_cl.copy()
+                    df_viz['Кластер'] = [f"Кластер {l}" for l in labels]
+
+                    fig_km = px.scatter(
+                        df_viz, x=c_cols[0], y=c_cols[1], color='Кластер',
+                        title=f"Кластерная структура ({c_cols[0]} vs {c_cols[1]})",
+                        template="plotly_white"
+                    )
+                    fig_km.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
+                    st.plotly_chart(fig_km, use_container_width=True)
+
+                # кнопка сохранения метки кластера в основной датасет
+                if 'last_cluster_result' in st.session_state:
+                    cl_info = st.session_state['last_cluster_result']
+                    if st.button("Сохранить колонку 'cluster' в текущую таблицу"):
+                        st.session_state.df['cluster'] = -1
+                        st.session_state.df.loc[cl_info['indices'], 'cluster'] = cl_info['labels']
+                        st.success("Метки кластеров успешно интегрированы в текущий датасет.")
+                        st.session_state.pop('last_cluster_result', None)
+                        st.rerun()
+            else:
+                st.info("Для кластеризации выберите не менее 2 числовых колонок.")
+
+    # ---------------------------------------------------------
+    # вкладка 4: бизнес-метрики
+    # ---------------------------------------------------------
+    with tab_metrics:
+        st.markdown("#### Продуктовая и коммерческая аналитика")
+
+        metric_kind = st.selectbox(
+            "Тип анализа",
+            [
+                "N+1 Retention (Возвращаемость следующего дня)",
+                "Когортный анализ (Cohort Analysis)",
+                "RFM-сегментация",
+                "Воронка конверсии",
+                "LTV (Lifetime Value) и Churn Rate"
+            ]
+        )
+
+        if metric_kind == "N+1 Retention (Возвращаемость следующего дня)":
+            st.markdown("Оценка доли пользователей, совершивших повторное действие ровно на следующий день после первого.")
+            col_u, col_d = st.columns(2)
+            with col_u:
+                user_id_col = st.selectbox("ID пользователя / клиента", df.columns, key="ret_u")
+            with col_d:
+                date_col = st.selectbox("Дата события", df.columns, key="ret_d")
+
+            if st.button("Рассчитать Retention"):
+                df_sub = df[[user_id_col, date_col]].dropna().copy()
+                df_sub[date_col] = pd.to_datetime(df_sub[date_col], errors='coerce')
+                df_sub = df_sub.dropna(subset=[date_col])
+
+                first_dates = df_sub.groupby(user_id_col)[date_col].min().reset_index()
+                first_dates.columns = [user_id_col, 'first_date']
+
+                merged = df_sub.merge(first_dates, on=user_id_col)
+                merged['day_diff'] = (merged[date_col].dt.floor('d') - merged['first_date'].dt.floor('d')).dt.days
+
+                retention_users = merged[merged['day_diff'] == 1][user_id_col].nunique()
+                total_base = first_dates[user_id_col].nunique()
+                ret_rate = (retention_users / total_base * 100) if total_base > 0 else 0
+
+                c_m1, c_m2 = st.columns(2)
+                c_m1.metric("N+1 Retention", f"{ret_rate:.2f}%")
+                c_m2.metric("Вернулись на день 1", f"{retention_users:,} из {total_base:,}")
+
+        elif metric_kind == "Когортный анализ (Cohort Analysis)":
+            col_cu, col_cd = st.columns(2)
+            with col_cu:
+                c_user_col = st.selectbox("ID пользователя", df.columns, key="coh_u")
+            with col_cd:
+                c_date_col = st.selectbox("Дата транзакции / визита", df.columns, key="coh_d")
+
+            if st.button("Сформировать когорты"):
+                df_c = df[[c_user_col, c_date_col]].dropna().copy()
+                df_c[c_date_col] = pd.to_datetime(df_c[c_date_col], errors='coerce')
+                df_c = df_c.dropna(subset=[c_date_col])
+
+                first_events = df_c.groupby(c_user_col)[c_date_col].min().reset_index()
+                first_events['cohort'] = first_events[c_date_col].dt.to_period('M')
+
+                df_c = df_c.merge(first_events[[c_user_col, 'cohort']], on=c_user_col)
+                df_c['activity_period'] = df_c[c_date_col].dt.to_period('M')
+
+                # разница в месяцах
+                df_c['period_index'] = (df_c['activity_period'] - df_c['cohort']).apply(lambda x: x.n)
+
+                cohort_counts = df_c.groupby(['cohort', 'period_index'])[c_user_col].nunique().unstack(fill_value=0)
+                cohort_sizes = cohort_counts.iloc[:, 0]
+                cohort_pct = cohort_counts.divide(cohort_sizes, axis=0) * 100
+
+                st.dataframe(cohort_pct.style.format("{:.1f}%"), use_container_width=True)
+
+                fig_coh = px.imshow(
+                    cohort_pct,
+                    labels=dict(x="Месяцев с момента первой активности", y="Когорта", color="Retention %"),
+                    text_auto=".1f",
+                    color_continuous_scale="Blues",
+                    template="plotly_white"
+                )
+                fig_coh.update_layout(height=380, margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig_coh, use_container_width=True)
+
+        elif metric_kind == "RFM-сегментация":
+            st.markdown("Сегментация клиентской базы по давности (Recency), частоте (Frequency) и сумме (Monetary).")
+            c_rfm1, c_rfm2, c_rfm3 = st.columns(3)
+            with c_rfm1:
+                rfm_u = st.selectbox("ID клиента", df.columns, key="rfm_u")
+            with c_rfm2:
+                rfm_d = st.selectbox("Дата заказа", df.columns, key="rfm_d")
+            with c_rfm3:
+                num_only = df.select_dtypes(include=['number']).columns.tolist()
+                rfm_m = st.selectbox("Сумма заказа", num_only or df.columns, key="rfm_m")
+
+            if st.button("Построить RFM матрицу"):
+                df_rfm = df[[rfm_u, rfm_d, rfm_m]].dropna().copy()
+                df_rfm[rfm_d] = pd.to_datetime(df_rfm[rfm_d], errors='coerce')
+                df_rfm = df_rfm.dropna(subset=[rfm_d])
+                max_date = df_rfm[rfm_d].max()
+
+                rfm_table = df_rfm.groupby(rfm_u).agg({
+                    rfm_d: lambda x: (max_date - x.max()).days,
+                    rfm_u: 'count',
+                    rfm_m: 'sum'
+                }).rename(columns={rfm_d: 'Recency', rfm_u: 'Frequency', rfm_m: 'Monetary'})
+
+                # безопасный qcut с защитой от дублирующихся квантилей через rank
+                rfm_table['R_score'] = pd.qcut(rfm_table['Recency'].rank(method='first'), 4, labels=['4', '3', '2', '1'])
+                rfm_table['F_score'] = pd.qcut(rfm_table['Frequency'].rank(method='first'), 4, labels=['1', '2', '3', '4'])
+                rfm_table['M_score'] = pd.qcut(rfm_table['Monetary'].rank(method='first'), 4, labels=['1', '2', '3', '4'])
+                rfm_table['RFM_Segment'] = rfm_table['R_score'].astype(str) + rfm_table['F_score'].astype(str) + rfm_table['M_score'].astype(str)
+
+                st.dataframe(rfm_table.head(100), use_container_width=True)
+
+                seg_dist = rfm_table['RFM_Segment'].value_counts().head(15).reset_index()
+                seg_dist.columns = ['Сегмент', 'Число клиентов']
+                fig_rfm = px.bar(seg_dist, x='Сегмент', y='Число клиентов', template="plotly_white", title="Топ-15 RFM сегментов")
+                fig_rfm.update_layout(height=340, margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig_rfm, use_container_width=True)
+
+        elif metric_kind == "Воронка конверсии":
+            stage_col = st.selectbox("Колонка этапа воронки", df.columns, key="fnl_col")
+            if st.button("Построить воронку"):
+                counts = df[stage_col].value_counts().reset_index()
+                counts.columns = ['Этап', 'Пользователей']
+
+                fig_fnl = go.Figure(go.Funnel(
+                    y=counts['Этап'],
+                    x=counts['Пользователей'],
+                    textinfo="value+percent initial"
+                ))
+                fig_fnl.update_layout(template="plotly_white", height=380, margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig_fnl, use_container_width=True)
+
+        elif metric_kind == "LTV (Lifetime Value) и Churn Rate":
+            col_l1, col_l2, col_l3 = st.columns(3)
+            with col_l1:
+                ltv_u = st.selectbox("ID клиента", df.columns, key="ltv_u")
+            with col_l2:
+                num_only = df.select_dtypes(include=['number']).columns.tolist()
+                ltv_m = st.selectbox("Выручка", num_only or df.columns, key="ltv_m")
+            with col_l3:
+                ltv_d = st.selectbox("Дата последней активности", df.columns, key="ltv_d")
+
+            churn_days = st.slider("Период неактивности для признания оттока (дней)", 14, 180, 30)
+
+            if st.button("Рассчитать LTV и Churn Rate"):
+                df_sub = df[[ltv_u, ltv_m, ltv_d]].dropna().copy()
+                df_sub[ltv_d] = pd.to_datetime(df_sub[ltv_d], errors='coerce')
+                df_sub = df_sub.dropna(subset=[ltv_d])
+
+                total_users = df_sub[ltv_u].nunique()
+                total_revenue = df_sub[ltv_m].sum()
+                avg_ltv = (total_revenue / total_users) if total_users > 0 else 0
+
+                ref_date = df_sub[ltv_d].max()
+                cutoff = ref_date - pd.Timedelta(days=churn_days)
+
+                active_set = set(df_sub[df_sub[ltv_d] > cutoff][ltv_u].unique())
+                all_set = set(df_sub[ltv_u].unique())
+                churned_count = len(all_set - active_set)
+                churn_rate = (churned_count / total_users * 100) if total_users > 0 else 0
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Средний LTV на пользователя", f"{avg_ltv:,.2f}")
+                c2.metric("Уровень оттока (Churn Rate)", f"{churn_rate:.1f}%")
+                c3.metric("Ушедших пользователей", f"{churned_count:,} из {total_users:,}")
+
+    # ---------------------------------------------------------
+    # вкладка 5: справочник функций pandas
+    # ---------------------------------------------------------
+    with tab_docs:
+        st.markdown("#### Интерактивный справочник по методам pandas")
+
+        s_col1, s_col2 = st.columns([1, 2])
+        with s_col1:
+            cat_list = ["Все категории"] + list(knowledge_base.keys())
+            chosen_cat = st.selectbox("Категория операций", cat_list)
+            search_query = st.text_input("Поиск по сигнатуре или описанию", placeholder="merge, dropna, qcut, filter...")
+
+        with s_col2:
+            query = search_query.strip().lower()
+            active_cats = list(knowledge_base.keys()) if chosen_cat == "Все категории" else [chosen_cat]
+
+            matched_items = []
+            for cat in active_cats:
+                for item in knowledge_base.get(cat, []):
+                    if not query or (query in item['name'].lower() or query in item['desc'].lower() or query in item.get('example', '').lower()):
+                        matched_items.append((cat, item))
+
+            st.caption(f"Найдено методов: {len(matched_items)}")
+
+            for cat_name, item in matched_items[:40]:
+                with st.expander(f"`{item['name']}` — {item['desc']}"):
+                    st.markdown(f"**Описание:** {item['desc']}")
+                    st.code(item['example'], language='python')
+                    if 'params' in item:
+                        st.caption(f"Ключевые параметры: {item['params']}")
+                    st.caption(f"Категория: {cat_name}")
